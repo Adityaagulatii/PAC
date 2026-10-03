@@ -3,6 +3,12 @@ __pycache__/
 .venv/
 venv/
 
+# Model weights (copy from the USB: models/pothole-dityaen-yolo11/my_model.pt)
+models/
+
+# Per-run pothole/impact logs
+logs/
+
 # Recorded passes (large video files)
 data/
 *.mp4

@@ -101,10 +101,10 @@ class IMUStream:
             return dict(self.latest)
 
     def drain(self):
-        """Return and clear all samples received since the last drain."""
+        """Return and clear all samples received since the last drain, in phone-time order."""
         with self.lock:
             out, self.pending = self.pending, []
-        return out
+        return sorted(out, key=lambda s: s[1])
 
     def stop(self):
         self.running = False
