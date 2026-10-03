@@ -1,0 +1,8 @@
+__pycache__/
+*.pyc
+.venv/
+venv/
+
+# Recorded passes (large video files)
+data/
+*.mp4
