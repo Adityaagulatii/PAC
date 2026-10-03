@@ -1,28 +1,50 @@
-# PaveWatch: agentic pothole monitoring, 100% local on one GB10
+# PaveWatch
 
-A robot drives the same route every week. PaveWatch **sees** potholes with a camera, **feels** them with the
-IMU, **confirms** them with a vision-language model, **remembers** each one by GPS, and lets an **agent**
-decide when the road crew must act. Alerts go to Telegram. Every model runs on a single NVIDIA GB10 box;
-the only traffic that leaves it is the Telegram message.
+**The problem.** Road defects get worse for weeks, but crews only hear about them when a driver complains.
+Detection tools exist, but they leave small crews with a pile of pins and no way to tell which ones to fix first.
+
+**Our solution.** PaveWatch is a local agent on the GB10 that drives the same route repeatedly, tracks each
+defect's growth with camera, IMU and GPS, and forecasts when it will cross the repair line. It alerts a human
+on Telegram only when that's about to happen.
 
 ![PaveWatch architecture](docs/architecture.png)
+
+## How the code delivers it
+
+| Claim | Where it happens |
+|---|---|
+| **Local agent on the GB10** | YOLO on the GPU, Qwen3-VL and Nemotron-3.5-30B on local vLLM servers, the agent in a NemoClaw / OpenShell sandbox whose egress policy only lets Telegram out ([Running on the GB10](#running-on-the-gb10)) |
+| **Drives the same route repeatedly** | One recorded pass per week (`live_view.py --record data/weekN`), fed through `pavewatch_agent/run_pass.sh` |
+| **Tracks each defect with camera, IMU and GPS** | `observe.py` keeps the best YOLO frame, the VLM's verdict and explanation, the IMU impact felt at that moment and the GPS fix; `history.py` matches it to the same defect within 15 m and stores every pass |
+| **Forecasts when it will cross the repair line** | `history.py`: a 0–1 **repair index** (camera size 50%, VLM size 25%, IMU impact 25%), a least-squares trend over all passes, and the weeks and date until it reaches the **repair line (0.9)** |
+| **Alerts a human only when that's about to happen** | `decide.py`: the Nemotron agent gets the passes and the forecast and decides **FLAG** (line crossed) or **SCHEDULE** (crossing within 2 weeks), both sent to Telegram, or **WATCH** (stored silently) |
+| **Tells small crews which to fix first** | `python3 -m pavewatch_agent.history` ranks every tracked defect by how soon it crosses the line, and each alert carries its *fix-first priority #k of N* |
+
+### One defect over three weekly passes
+
+| Week | Camera · VLM · IMU | Repair index | Forecast | Agent | Crew hears |
+|---|---|---|---|---|---|
+| 1 | medium (8% of frame) · pothole, medium · LOW | 0.65 | first pass | **WATCH** | nothing |
+| 2 | large (26%) · pothole, medium · MEDIUM | 0.83 (+0.18/week) | crosses 0.9 in ~0.4 weeks | **SCHEDULE** | Telegram: plan the repair |
+| 3 | large (68%) · pothole, large · HIGH | 1.00 | line crossed | **FLAG** | Telegram: repair now |
+
+```
+$ python3 -m pavewatch_agent.history
+#1  PH-0001  42.370162,-71.070815  index 1.00/0.9  repair due now  | last decision FLAG  | 3 pass(es)
+#2  PH-0002  42.371500,-71.068900  index 0.65/0.9  first pass  | last decision WATCH  | 1 pass(es)
+```
+
+### Pipeline stages
 
 | Stage | What it does | Runs on | Code |
 |---|---|---|---|
 | **See** | YOLO11 finds potholes, grades **SMALL / MEDIUM / LARGE** | GPU | `pavewatch/detector.py` |
 | **Feel** | Jolt + twist from the phone IMU, graded **LOW / MEDIUM / HIGH** | CPU | `pavewatch/shock.py`, `imu_shock.py` |
-| **Confirm** | Qwen3-VL-8B: pothole vs speed bump / manhole / shadow, size + reason | vLLM `:8001` | `vlm/vlm_flagger.py` |
-| **Remember** | One observation per pass (photo + all values + GPS), matched to the same pothole within 15 m, week-over-week trend | host | `pavewatch_agent/observe.py`, `history.py` |
+| **Confirm** | Qwen3-VL-8B: pothole vs speed bump / manhole / shadow, size + explanation | vLLM `:8001` | `vlm/vlm_flagger.py` |
+| **Remember** | One observation per pass (photo + all values + GPS), matched to the same defect within 15 m | host | `pavewatch_agent/observe.py`, `history.py` |
+| **Forecast** | Repair index per pass, trend across weeks, weeks/date to the repair line, fix-first ranking | host | `pavewatch_agent/history.py` |
 | **Decide** | Nemotron-3.5-30B agent in an OpenShell sandbox: **FLAG / SCHEDULE / WATCH** | vLLM `:8000` via NemoClaw | `pavewatch_agent/decide.py` |
-| **Alert** | Telegram report with every logged value, the VLM explanations and one photo per week | OpenClaw | `pavewatch_agent/decide.py` |
-
-Example from one spot, three weekly passes:
-
-| Week | Readings | Agent |
-|---|---|---|
-| 1 | YOLO medium (8% of frame) · VLM pothole 0.98 · IMU LOW | **WATCH**: stored, no message |
-| 2 | YOLO large (26%) · VLM pothole 0.98 · IMU MEDIUM | **FLAG**: grew medium → large in a week |
-| 3 | YOLO large (68%) · VLM large · IMU HIGH | **FLAG**: severe; report + 3 photos |
+| **Alert** | Telegram report: forecast, priority, every logged value, VLM explanations, one photo per pass | OpenClaw | `pavewatch_agent/decide.py` |
 
 ## Quick start
 
@@ -118,13 +140,23 @@ pavewatch_agent/run_pass.sh data/week1
 
 1. **observe**: runs YOLO over the video and keeps the most confident detection (conf ≥ 0.6), saves that
    frame, asks the VLM about it, and takes the worst IMU impact within 2 s of it (or the worst of the pass).
-2. **remember**: matches the observation to a known pothole within 15 m (`data/history/potholes.json`),
-   or starts a new one (`PH-0001`, `PH-0002`, …), and computes the trend across weeks.
-3. **decide**: if the VLM confirmed a pothole, the agent gets this pass, every earlier pass and the trend,
-   and answers **FLAG** (severe now), **SCHEDULE** (will become severe) or **WATCH** (keep monitoring).
-4. **alert**: FLAG and SCHEDULE send a Telegram report: decision and reason, map link, every logged value
-   per week (YOLO size/conf/area, VLM label/size/explanation, IMU jolt/twist) and one annotated photo per
-   pass. WATCH is stored silently and compared against next week's pass.
+2. **remember**: matches the observation to a known defect within 15 m (`data/history/potholes.json`),
+   or starts a new one (`PH-0001`, `PH-0002`, …).
+3. **forecast**: computes the repair index for every pass, fits the trend, and estimates the weeks and date
+   until the repair line; ranks all tracked defects to give this one its fix-first priority.
+4. **decide**: if the VLM confirmed a pothole, the agent gets this pass, every earlier pass, the forecast and
+   the priority, and answers **FLAG** (line crossed), **SCHEDULE** (crossing within 2 weeks) or **WATCH**.
+5. **alert**: FLAG and SCHEDULE send a Telegram report: forecast, priority, decision and reason, map link,
+   every logged value per week (YOLO size/conf/area, VLM label/size/explanation, IMU jolt/twist, repair index)
+   and one annotated photo per pass. WATCH is stored silently and compared against next week's pass.
+
+Which defects to fix first, at any time:
+
+```bash
+python3 -m pavewatch_agent.history
+```
+
+The repair line, weights, alert horizon and match radius are in `pavewatch_agent/config.py`.
 
 A single photo works too, with the IMU level given by hand:
 
@@ -243,8 +275,8 @@ vlm/
 pavewatch_agent/
   run_pass.sh          one weekly pass: observe -> remember -> decide -> alert
   observe.py           best YOLO frame + VLM verdict + IMU impact + GPS -> observation.json
-  history.py           GPS matching, pothole history, week-over-week trend
-  decide.py            agent prompt, FLAG / SCHEDULE / WATCH, Telegram report
+  history.py           GPS matching, defect history, repair index, forecast, fix-first ranking
+  decide.py            agent call (FLAG / SCHEDULE / WATCH), alert policy, Telegram report
   config.py            GPS default, match radius, thresholds, sandbox + Telegram settings
   panels/              VLM and agent panels for the screen
 docs/

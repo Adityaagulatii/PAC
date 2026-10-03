@@ -17,8 +17,12 @@ VLM_URL = os.environ.get("VLM_URL", "http://localhost:8001")
 VLM_MIN_CONF = 0.6
 VLM_FLAGGER_PATHS = [os.path.join(ROOT, "vlm", "vlm_flagger.py")]
 
-# Trend: box share of the frame that counts as "large" (matches config.POTHOLE_SIZE_BANDS[1])
-LARGE_AREA_FRAC = 0.10
+# Repair line and forecast (history.py). The repair index mixes camera, VLM and IMU into 0..1.
+REPAIR_AREA_FRAC = 0.10      # YOLO box share of the frame that counts as full size (= "large" band in config.py)
+INDEX_WEIGHTS = {"camera": 0.5, "vlm": 0.25, "imu": 0.25}
+REPAIR_LINE = 0.9            # repair index at which the defect needs repair
+ALERT_HORIZON_WEEKS = 2      # alert when the forecast says the line is crossed within this many passes
+DAYS_PER_PASS = 7            # the robot drives the route once a week
 
 # Agent + Telegram (OpenClaw inside the NemoClaw sandbox)
 SANDBOX = "pavewatch"
