@@ -6,3 +6,9 @@ venv/
 # Recorded passes (large video files)
 data/
 *.mp4
+data/
+results/
+*.tar
+models/
+__pycache__/
+.env
