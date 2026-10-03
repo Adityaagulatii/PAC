@@ -1,3 +1,4 @@
 opencv-python
 requests
 ultralytics
+pillow

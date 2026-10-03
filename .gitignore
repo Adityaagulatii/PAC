@@ -9,3 +9,6 @@ logs/
 # Recorded passes (large video files)
 data/
 *.mp4
+
+# VLM flagger output
+results/

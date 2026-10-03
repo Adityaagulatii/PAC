@@ -1,0 +1,112 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><title>PaveWatch Architecture</title>
+<style>
+  :root { --bg:#0f1419; --panel:#161d26; --line:#2a3542; --text:#e6edf3; --muted:#8b98a5;
+          --see:#f5b84a; --feel:#4ac2f5; --confirm:#b18cf5; --remember:#5fd38d; --decide:#76b900; --alert:#2aa3e0; --red:#f0645a; }
+  * { box-sizing:border-box; margin:0; }
+  body { width:1800px; height:1000px; background:var(--bg); color:var(--text); font-family:"Ubuntu","DejaVu Sans",sans-serif; padding:34px 40px; }
+  h1 { font-size:34px; letter-spacing:.5px; } h1 span { color:var(--decide); }
+  .sub { color:var(--muted); font-size:17px; margin:6px 0 22px; }
+  .grid { display:grid; grid-template-columns: 280px 1fr 300px; gap:26px; height:820px; }
+  .col { display:flex; flex-direction:column; gap:16px; }
+  .card { background:var(--panel); border:1px solid var(--line); border-radius:12px; padding:14px 16px; position:relative; }
+  .card h3 { font-size:18px; margin-bottom:6px; display:flex; align-items:center; gap:8px; }
+  .card p, .card li { font-size:14.5px; color:#c9d4de; line-height:1.4; }
+  .card ul { padding-left:18px; }
+  .tag { font-size:11.5px; font-weight:700; letter-spacing:1px; padding:2px 8px; border-radius:20px; color:#0f1419; }
+  .mono { font-family:"DejaVu Sans Mono",monospace; font-size:13px; color:var(--muted); }
+  .box { border:2px dashed #3d4b5a; border-radius:16px; padding:18px 18px 16px; position:relative; height:100%; }
+  .box > .label { position:absolute; top:-13px; left:18px; background:var(--bg); padding:0 10px; font-weight:700; font-size:16px; color:var(--decide); }
+  .stages { display:grid; grid-template-columns: 1fr 1fr 1fr; gap:14px; }
+  .flow { display:grid; grid-template-columns: 1fr 1fr; gap:14px; margin-top:14px; }
+  .arrow { text-align:center; color:var(--muted); font-size:22px; line-height:1; margin:6px 0; }
+  .s-see{border-top:4px solid var(--see)} .s-feel{border-top:4px solid var(--feel)} .s-confirm{border-top:4px solid var(--confirm)}
+  .s-remember{border-top:4px solid var(--remember)} .s-decide{border-top:4px solid var(--decide)} .s-alert{border-top:4px solid var(--alert)}
+  .sandbox { border:2px solid var(--red); border-radius:12px; padding:12px 14px 10px; margin-top:8px; }
+  .sandbox .t { color:var(--red); font-weight:700; font-size:14px; margin-bottom:4px; }
+  .tiers { display:flex; gap:8px; margin-top:8px; }
+  .tier { flex:1; text-align:center; border-radius:8px; padding:7px 4px; font-size:13px; font-weight:700; }
+  .loop { margin-top:14px; border:1px solid var(--line); border-radius:12px; padding:10px 14px; font-size:14.5px; color:#c9d4de; background:#121921; }
+  .foot { position:absolute; bottom:16px; left:40px; right:40px; display:flex; justify-content:space-between; color:var(--muted); font-size:13.5px; }
+  .weeks { display:flex; align-items:stretch; gap:8px; margin-top:14px; }
+  .wk { flex:1; background:var(--panel); border:1px solid var(--line); border-radius:10px; padding:10px 12px; font-size:13.5px; color:#c9d4de; line-height:1.45; }
+  .wh { font-weight:700; color:var(--text); font-size:15px; margin-bottom:2px; }
+  .wd { font-weight:700; margin-top:4px; }
+  .wa { align-self:center; color:var(--muted); font-size:20px; }
+</style></head>
+<body>
+<h1>Pave<span>Watch</span> — agentic road maintenance, 100% local on one GB10</h1>
+<div class="sub">A robot drives the same route every week. Each pothole is seen, felt, confirmed, remembered by GPS, and the agent decides when the crew must act.</div>
+
+<div class="grid">
+  <!-- INPUTS -->
+  <div class="col">
+    <div class="card"><h3>🤖 Robot / phone on a fixed weekly route</h3>
+      <p>Android phone running <b>IP Webcam</b>, same Wi-Fi as the GB10</p></div>
+    <div class="card s-see"><h3>📹 Video</h3><p>1080p / 720p MJPEG stream<br><span class="mono">:8080/video</span></p></div>
+    <div class="card s-feel"><h3>📳 IMU</h3><p>accelerometer, gyroscope, linear acceleration<br><span class="mono">:8080/sensors.json</span></p></div>
+    <div class="card"><h3>📍 GPS</h3><p>Location of each detection<br><span class="mono">demo point 42.370162, −71.070815</span></p></div>
+    <div class="card"><h3>🖥️ On the GB10 monitor</h3>
+      <ul><li><b>PaveWatch</b> window: video + YOLO boxes + IMU + impact banner</li>
+          <li><b>VLM panel</b>: verdict each time YOLO is confident</li>
+          <li><b>Agent panel</b>: readings, trend, decision, Telegram status</li></ul></div>
+  </div>
+
+  <!-- GB10 -->
+  <div class="box"><div class="label">Dell Pro Max · NVIDIA GB10 Grace Blackwell · 128 GB unified memory · no cloud</div>
+    <div class="stages">
+      <div class="card s-see"><h3><span class="tag" style="background:var(--see)">SEE</span> YOLO11 detector</h3>
+        <p>DityaEn pothole weights, GPU, ~15 ms/frame<br>Size <b>SMALL / MEDIUM / LARGE</b> from the box's share of the frame</p>
+        <p class="mono">pavewatch-detector · detector.py</p></div>
+      <div class="card s-feel"><h3><span class="tag" style="background:var(--feel)">FEEL</span> Shock detector</h3>
+        <p>Jolt |lin_accel| + twist |gyro|, peak over 0.3 s<br>Impact <b>LOW / MEDIUM / HIGH</b> (worse of the two)</p>
+        <p class="mono">shock.py · imu_shock.py</p></div>
+      <div class="card s-confirm"><h3><span class="tag" style="background:var(--confirm)">CONFIRM</span> Qwen3-VL-8B</h3>
+        <p>Runs when YOLO conf ≥ 0.6<br>pothole vs speed bump / manhole / shadow + size + reason</p>
+        <p class="mono">vLLM :8001 · vlm_flagger.py</p></div>
+    </div>
+    <div class="arrow">▼ &nbsp; one observation per pass: photo + YOLO + VLM + IMU + GPS &nbsp; ▼</div>
+    <div class="flow">
+      <div class="card s-remember"><h3><span class="tag" style="background:var(--remember)">REMEMBER</span> Match + history + trend</h3>
+        <ul><li>Same pothole = within <b>15 m</b> by GPS → PH-0001, PH-0002…</li>
+            <li>Every pass stored: photos, all values, VLM explanation, past decisions</li>
+            <li>Trend: size S→M→L, frame-area %/week, IMU LOW→HIGH, weeks until large</li></ul>
+        <p class="mono">pavewatch_agent/observe.py · history.py → data/history/potholes.json</p></div>
+      <div class="card s-decide"><h3><span class="tag" style="background:var(--decide)">DECIDE</span> NemoClaw agent</h3>
+        <div class="sandbox"><div class="t">OpenShell sandbox · egress policy enforced</div>
+          <p><b>OpenClaw</b> agent → <span class="mono">inference.local</span> → NemoClaw proxy →
+             <b>Nemotron-3.5-30B NVFP4</b> + MTP on vLLM :8000</p>
+          <p>Gets this pass + all earlier passes + trend, makes the call:</p>
+          <div class="tiers">
+            <div class="tier" style="background:#3a1715;color:#ff8a80">FLAG<br><span style="font-weight:400">severe now</span></div>
+            <div class="tier" style="background:#3a2e10;color:#ffd166">SCHEDULE<br><span style="font-weight:400">will get severe</span></div>
+            <div class="tier" style="background:#12301e;color:#7ee2a8">WATCH<br><span style="font-weight:400">store, no message</span></div>
+          </div></div>
+        <p class="mono" style="margin-top:6px">pavewatch_agent/decide.py</p></div>
+    </div>
+    <div class="loop">🔁 <b>Next week</b> the robot passes again → the new reading is matched to the same pothole and compared with every earlier week, so a WATCH can become SCHEDULE or FLAG as it grows.</div>
+    <div class="weeks">
+      <div class="wk"><div class="wh">Week 1</div><div>YOLO <b>medium</b> 8% · VLM pothole 0.98 · IMU <b>LOW</b></div><div class="wd" style="color:#7ee2a8">WATCH — first sighting, stored</div></div>
+      <div class="wa">➜</div>
+      <div class="wk"><div class="wh">Week 2</div><div>YOLO <b>large</b> 26% · VLM pothole 0.98 · IMU <b>MEDIUM</b></div><div class="wd" style="color:#ff8a80">FLAG — grew medium → large in a week</div></div>
+      <div class="wa">➜</div>
+      <div class="wk"><div class="wh">Week 3</div><div>YOLO <b>large</b> 68% · VLM <b>large</b> · IMU <b>HIGH</b></div><div class="wd" style="color:#ff8a80">FLAG — severe, alert + 3 photos</div></div>
+    </div>
+    <div class="mono" style="margin-top:6px;text-align:center">Same GPS spot → matched as PH-0001 (test run on the GB10, decisions made by Nemotron)</div>
+  </div>
+
+  <!-- OUTPUT -->
+  <div class="col">
+    <div class="card s-alert" style="flex:1"><h3><span class="tag" style="background:var(--alert)">ALERT</span> Telegram</h3>
+      <p><b>@PaveWatchBot</b> → road crew (allow-listed user only)</p><br>
+      <ul><li>Decision + reason + map link</li><li>Every logged value per week: YOLO size/conf/area, VLM label/size/<i>explanation</i>, IMU jolt/twist</li>
+          <li>One annotated photo per weekly pass</li><li>Trend: small → medium → large</li></ul><br>
+      <p>Only FLAG and SCHEDULE are sent.</p></div>
+    <div class="card" style="border-color:var(--red)"><h3>🔒 What leaves the box</h3>
+      <p>Only <span class="mono">api.telegram.org</span>, for this bot's token. Everything else is blocked by OpenShell (e.g. example.com → denied). All models run locally.</p></div>
+    <div class="card"><h3>🧠 Models (all local)</h3>
+      <p class="mono">YOLO11 dityaen · GPU<br>Qwen3-VL-8B-FP8 · vLLM :8001<br>Nemotron-3.5-30B-A3B-NVFP4 · vLLM :8000</p></div>
+  </div>
+</div>
+<div class="foot"><span>PaveWatch · PAC</span><span>Stack: NemoClaw → OpenShell → OpenClaw → vLLM · Docker on DGX OS / Ubuntu 24.04 aarch64</span></div>
+</body></html>

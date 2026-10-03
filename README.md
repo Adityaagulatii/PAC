@@ -1,15 +1,28 @@
-# PaveWatch: phone camera + IMU pothole capture
+# PaveWatch: agentic pothole monitoring, 100% local on one GB10
 
-This repo holds the **See** and **Feel** stages of the PaveWatch pipeline. An Android phone
-running the [IP Webcam](https://play.google.com/store/apps/details?id=com.pas.webcam) app streams
-video and motion-sensor data to a computer, which:
+A robot drives the same route every week. PaveWatch **sees** potholes with a camera, **feels** them with the
+IMU, **confirms** them with a vision-language model, **remembers** each one by GPS, and lets an **agent**
+decide when the road crew must act. Alerts go to Telegram. Every model runs on a single NVIDIA GB10 box;
+the only traffic that leaves it is the Telegram message.
 
-- **finds potholes** in the video with a YOLO11 detector and grades each one **SMALL / MEDIUM / LARGE**
-- **feels bumps** with the phone's accelerometer and gyroscope and grades each impact **LOW / MEDIUM / HIGH**
-- shows both live on the video and logs every pothole and impact to CSV
+![PaveWatch architecture](docs/architecture.png)
 
-The VLM check (Qwen3-VL), the tier decision (Nemotron) and the Telegram alert are separate stages
-and are not in this repo yet.
+| Stage | What it does | Runs on | Code |
+|---|---|---|---|
+| **See** | YOLO11 finds potholes, grades **SMALL / MEDIUM / LARGE** | GPU | `pavewatch/detector.py` |
+| **Feel** | Jolt + twist from the phone IMU, graded **LOW / MEDIUM / HIGH** | CPU | `pavewatch/shock.py`, `imu_shock.py` |
+| **Confirm** | Qwen3-VL-8B: pothole vs speed bump / manhole / shadow, size + reason | vLLM `:8001` | `vlm/vlm_flagger.py` |
+| **Remember** | One observation per pass (photo + all values + GPS), matched to the same pothole within 15 m, week-over-week trend | host | `pavewatch_agent/observe.py`, `history.py` |
+| **Decide** | Nemotron-3.5-30B agent in an OpenShell sandbox: **FLAG / SCHEDULE / WATCH** | vLLM `:8000` via NemoClaw | `pavewatch_agent/decide.py` |
+| **Alert** | Telegram report with every logged value, the VLM explanations and one photo per week | OpenClaw | `pavewatch_agent/decide.py` |
+
+Example from one spot, three weekly passes:
+
+| Week | Readings | Agent |
+|---|---|---|
+| 1 | YOLO medium (8% of frame) · VLM pothole 0.98 · IMU LOW | **WATCH**: stored, no message |
+| 2 | YOLO large (26%) · VLM pothole 0.98 · IMU MEDIUM | **FLAG**: grew medium → large in a week |
+| 3 | YOLO large (68%) · VLM large · IMU HIGH | **FLAG**: severe; report + 3 photos |
 
 ## Quick start
 
@@ -19,6 +32,9 @@ cd PAC
 pip install -r requirements.txt
 python live_view.py --ip <phone-ip>
 ```
+
+This runs **See + Feel** live. For the full pipeline (VLM, history, agent, Telegram) see
+[Full pipeline](#full-pipeline).
 
 Press **q** in the video window to quit. The pothole model is included at `models/pothole_yolo11.pt`,
 so there's nothing else to download.
@@ -79,6 +95,72 @@ so the rebound from one bump doesn't count as a second impact.
 
 These thresholds were set from manual bumps with the phone in hand. **Re-tune them once the phone is
 on the carrier** (see [Tuning](#tuning)).
+
+## Full pipeline
+
+The **Confirm → Remember → Decide → Alert** stages need the local model servers and the agent sandbox
+(see [Running on the GB10](#running-on-the-gb10)).
+
+**1. Record one pass per week** (same route, same phone mount):
+
+```bash
+python live_view.py --record data/week1      # next week: data/week2, then data/week3 ...
+```
+
+**2. Run the pass through the pipeline:**
+
+```bash
+export PAVEWATCH_TELEGRAM_ID=<your Telegram user id>   # ask @userinfobot
+pavewatch_agent/run_pass.sh data/week1
+```
+
+`run_pass.sh` does, in order:
+
+1. **observe**: runs YOLO over the video and keeps the most confident detection (conf ≥ 0.6), saves that
+   frame, asks the VLM about it, and takes the worst IMU impact within 2 s of it (or the worst of the pass).
+2. **remember**: matches the observation to a known pothole within 15 m (`data/history/potholes.json`),
+   or starts a new one (`PH-0001`, `PH-0002`, …), and computes the trend across weeks.
+3. **decide**: if the VLM confirmed a pothole, the agent gets this pass, every earlier pass and the trend,
+   and answers **FLAG** (severe now), **SCHEDULE** (will become severe) or **WATCH** (keep monitoring).
+4. **alert**: FLAG and SCHEDULE send a Telegram report: decision and reason, map link, every logged value
+   per week (YOLO size/conf/area, VLM label/size/explanation, IMU jolt/twist) and one annotated photo per
+   pass. WATCH is stored silently and compared against next week's pass.
+
+A single photo works too, with the IMU level given by hand:
+
+```bash
+pavewatch_agent/run_pass.sh images/1.jpg --impact low
+```
+
+Options: `--gps LAT LON` sets the location (default: the demo point in `pavewatch_agent/config.py`);
+`WEEK=N`, `HISTORY=dir` and `NO_TELEGRAM=1` are read from the environment.
+
+**On-screen panels** (open next to the `live_view.py` window):
+
+```bash
+pavewatch_agent/panels/vlm_panel.sh     # VLM verdict each time YOLO is confident
+pavewatch_agent/panels/agent_panel.sh   # readings, trend, decision and Telegram status per pass
+```
+
+The VLM check also runs on its own over a folder of images:
+
+```bash
+python vlm/vlm_flagger.py --images images --out results   # results.csv + flagged.json
+```
+
+## Running on the GB10
+
+Everything runs locally on a Dell Pro Max with NVIDIA GB10 (Grace Blackwell, 128 GB unified memory):
+
+| Service | Model | How |
+|---|---|---|
+| Detector | YOLO11 (`models/pothole_yolo11.pt`) | ultralytics on the GPU |
+| VLM | Qwen3-VL-8B-Instruct-FP8 | vLLM `:8001`, `--gpu-memory-utilization 0.22`, `VLLM_USE_DEEP_GEMM=0` (needed on GB10) |
+| Agent LLM | Nemotron-3.5-Lightning-30B-A3B-NVFP4 + MTP | vLLM `:8000`, NVIDIA's GB10 recipe, `--gpu-memory-utilization 0.50` |
+| Agent | OpenClaw in an OpenShell sandbox | NemoClaw, custom provider → `localhost:8000`, Telegram channel |
+
+Both vLLM servers bind to `127.0.0.1` only. The sandbox reaches the agent LLM through NemoClaw's
+inference proxy, and its egress policy allows `api.telegram.org` for the bot token only.
 
 ## Logs
 
@@ -156,7 +238,17 @@ recorded passes, a 100 Hz phyphox log gives truer peaks; replay it with `imu_sho
 config.py              phone IP, thresholds, size bands, paths
 live_view.py           live video + pothole boxes + impact banner + logging (main entry point)
 imu_shock.py           IMU stage on its own: live, CSV replay, calibration
-ipcam_simple.py        minimal OpenCV example: rotated stream + raw IMU values
+vlm/
+  vlm_flagger.py       Qwen3-VL check: pothole / speed bump / manhole / shadow, size, reason
+pavewatch_agent/
+  run_pass.sh          one weekly pass: observe -> remember -> decide -> alert
+  observe.py           best YOLO frame + VLM verdict + IMU impact + GPS -> observation.json
+  history.py           GPS matching, pothole history, week-over-week trend
+  decide.py            agent prompt, FLAG / SCHEDULE / WATCH, Telegram report
+  config.py            GPS default, match radius, thresholds, sandbox + Telegram settings
+  panels/              VLM and agent panels for the screen
+docs/
+  architecture.png     the diagram above
 pavewatch/
   ipcam.py             VideoStream and IMUStream background readers for IP Webcam
   shock.py             ShockDetector: jolt + twist impact grading, phyphox CSV reader
