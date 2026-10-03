@@ -14,7 +14,7 @@ Outputs (in --out, default ./results):
   results.csv   one row per image with the VLM verdict
   flagged.json  only the flagged potholes -> input for the agent
 """
-import argparse, base64, csv, io, json, re, time
+import argparse, base64, csv, io, json, os, re, time
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
@@ -58,6 +58,7 @@ def encode_image(path, max_side=1024):
 
 def parse_reply(text):
     """Pull the JSON object out of the model reply and sanity-check it."""
+    text = re.sub(r"<think>.*?</think>", "", text, flags=re.DOTALL)  # Qwen3 Thinking models reason first
     match = re.search(r"\{.*\}", text, re.DOTALL)
     out = json.loads(match.group(0)) if match else {}
     label = str(out.get("label", "unclear")).strip().lower().replace(" ", "_")
@@ -65,7 +66,7 @@ def parse_reply(text):
         conf = max(0.0, min(1.0, float(out.get("confidence", 0))))
     except (TypeError, ValueError):
         conf = 0.0
-    size = out.get("size") if label == "pothole" else None
+    size = out.get("size") if label == "pothole" and out.get("size") in ("small", "medium", "large") else None
     return {"label": label if label in LABELS else "unclear", "confidence": conf,
             "size": size, "reason": str(out.get("reason", ""))[:120]}
 
@@ -103,7 +104,11 @@ def collect(args):
     rows = []
     if args.csv:
         with open(args.csv, newline="") as f:
-            for row in csv.DictReader(f):
+            reader = csv.DictReader(f)
+            if args.image_col not in (reader.fieldnames or []):
+                raise SystemExit(f"{args.csv} has no '{args.image_col}' column (has: {reader.fieldnames}). "
+                                 "Pass --image-col, or point --images at a folder of frames.")
+            for row in reader:
                 p = Path(row[args.image_col])
                 if not p.is_absolute() and args.images:
                     p = Path(args.images) / p
@@ -120,7 +125,8 @@ def main():
     ap.add_argument("--images", help="folder of images (searched recursively)")
     ap.add_argument("--csv", help="optional CSV listing images (e.g. images.csv)")
     ap.add_argument("--image-col", default="frame_file", help="CSV column holding the image path")
-    ap.add_argument("--url", default="http://localhost:8001", help="vLLM server for Qwen3-VL")
+    ap.add_argument("--url", default=os.environ.get("VLM_URL", "http://172.20.65.117:8001"),
+                    help="vLLM server for Qwen3-VL (or set VLM_URL)")
     ap.add_argument("--threshold", type=float, default=0.6, help="min confidence to flag a pothole")
     ap.add_argument("--workers", type=int, default=2, help="parallel requests (keep 1-4 on the GB10)")
     ap.add_argument("--limit", type=int, default=0, help="only process the first N images")
@@ -130,7 +136,11 @@ def main():
         ap.error("give --images and/or --csv")
 
     rows = collect(args)
-    model = get_model(args.url)
+    try:
+        model = get_model(args.url)
+    except requests.RequestException as e:
+        raise SystemExit(f"Can't reach vLLM at {args.url} ({type(e).__name__}). Is it running and listening "
+                         "on 0.0.0.0, not just localhost? Use --url or VLM_URL to point elsewhere.")
     print(f"Model: {model} | images: {len(rows)}")
 
     with ThreadPoolExecutor(max_workers=args.workers) as pool:
